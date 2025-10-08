@@ -202,7 +202,23 @@ impl DeadCodeFinder {
 
     fn find_root_files(&self) -> HashSet<PathBuf> {
         let mut roots = HashSet::new();
-        
+
+        // First, look for WordPress plugin header (the true root file)
+        // Plugin Name: is a required field in WordPress plugin headers
+        let plugin_header_pattern = Regex::new(r"(?m)^\s*\*\s*Plugin Name:").unwrap();
+
+        for (path, file_info) in &self.files {
+            if file_info.file_type == FileType::Php {
+                if let Ok(content) = fs::read_to_string(path) {
+                    if plugin_header_pattern.is_match(&content) {
+                        roots.insert(path.clone());
+                        return roots; // WordPress plugins have only one root file
+                    }
+                }
+            }
+        }
+
+        // Fallback: if no WordPress plugin header found, use old logic
         for (path, file_info) in &self.files {
             if file_info.file_type == FileType::Php && file_info.referenced_by.is_empty() {
                 // Check if this file includes other files (likely a root)
@@ -214,7 +230,7 @@ impl DeadCodeFinder {
                 }
             }
         }
-        
+
         // If no roots found, consider files in the root directory as potential roots
         if roots.is_empty() {
             for (path, file_info) in &self.files {
@@ -227,7 +243,7 @@ impl DeadCodeFinder {
                 }
             }
         }
-        
+
         roots
     }
 
