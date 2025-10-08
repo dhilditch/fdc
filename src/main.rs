@@ -69,7 +69,7 @@ impl DeadCodeFinder {
         }
     }
 
-    fn discover_files(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn discover_files(&mut self, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
         for entry in WalkDir::new(&self.root_path)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -84,11 +84,22 @@ impl DeadCodeFinder {
                             referenced_by: Vec::new(),
                             referenced_in_comments: Vec::new(),
                         };
-                        
+
                         if file_type == FileType::Php {
                             self.php_files.push(path.to_path_buf());
                         }
-                        
+
+                        if verbose {
+                            if let Ok(relative) = path.strip_prefix(&self.root_path) {
+                                let icon = match file_type {
+                                    FileType::Php => "🐘",
+                                    FileType::JavaScript => "📜",
+                                    FileType::Css => "🎨",
+                                };
+                                println!("  {} Found: {}", icon, relative.display().to_string().dimmed());
+                            }
+                        }
+
                         self.files.insert(path.to_path_buf(), file_info);
                     }
                 }
@@ -247,8 +258,10 @@ impl DeadCodeFinder {
 
     fn print_results(&self, dead_files: &[&FileInfo], commented_dead_files: &[&FileInfo], verbose: bool) {
         let roots = self.find_root_files();
-        
+
         if verbose {
+            println!("\n{}", "=== Analysis Results ===".cyan().bold());
+            println!();
             println!("{}", "Root files (not considered dead):".cyan().bold());
             for root in &roots {
                 if let Ok(relative) = root.strip_prefix(&self.root_path) {
@@ -256,6 +269,34 @@ impl DeadCodeFinder {
                 }
             }
             println!();
+
+            // Show all alive files (referenced and not dead)
+            let dead_paths: HashSet<&PathBuf> = dead_files.iter()
+                .chain(commented_dead_files.iter())
+                .map(|f| &f.path)
+                .collect();
+
+            let alive_files: Vec<&FileInfo> = self.files.values()
+                .filter(|f| !roots.contains(&f.path) && !dead_paths.contains(&f.path))
+                .collect();
+
+            if !alive_files.is_empty() {
+                println!("{}", "Alive files (referenced in code):".green().bold());
+                for file in alive_files {
+                    if let Ok(relative) = file.path.strip_prefix(&self.root_path) {
+                        let icon = match file.file_type {
+                            FileType::Php => "🐘",
+                            FileType::JavaScript => "📜",
+                            FileType::Css => "🎨",
+                        };
+                        println!("  {} {} (referenced by {} file(s))",
+                            icon,
+                            relative.display().to_string().green(),
+                            file.referenced_by.len());
+                    }
+                }
+                println!();
+            }
         }
 
         if !dead_files.is_empty() {
@@ -315,20 +356,24 @@ impl DeadCodeFinder {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    
+
     let root_path = cli.path.unwrap_or_else(|| std::env::current_dir().unwrap());
-    
+
     if !root_path.exists() {
         eprintln!("Error: Path '{}' does not exist", root_path.display());
         std::process::exit(1);
     }
-    
+
     println!("🔍 Scanning for dead code in: {}", root_path.display().to_string().cyan());
-    
+
+    if cli.verbose {
+        println!("\n{}", "Discovering files...".dimmed());
+    }
+
     let mut finder = DeadCodeFinder::new(root_path);
-    
-    finder.discover_files()?;
-    println!("📊 Found {} files to analyze", finder.files.len());
+
+    finder.discover_files(cli.verbose)?;
+    println!("\n📊 Found {} files to analyze", finder.files.len());
     
     finder.find_references()?;
     
